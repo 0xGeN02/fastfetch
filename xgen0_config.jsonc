@@ -14,7 +14,7 @@ fastfetch --config hyde/*.jsonc
 {
   "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
   "logo": {
-    "source": "/home/xgen0/fastfetch/src/logo/ascii/arch_penguin.txt",
+    "source": "~/fastfetch/src/logo/ascii/arch_penguin.txt",
     "padding": {
         "top": 2
     },
@@ -37,7 +37,7 @@ fastfetch --config hyde/*.jsonc
     },
     {
       "type": "custom",
-      "format": "┌──────────────────────────────────────────┐"
+      "format": "┌──────────────────────────────────────--------─-───┐"
     },
     {
       "type": "chassis",
@@ -80,7 +80,7 @@ fastfetch --config hyde/*.jsonc
     },
     {
       "type": "custom",
-      "format": "└──────────────────────────────────────────┘"
+      "format": "└───────────────────────────────────────------───--┘"
     },
     "break",
     {
@@ -90,7 +90,7 @@ fastfetch --config hyde/*.jsonc
     },
     {
       "type": "custom",
-      "format": "┌──────────────────────────────────────────┐"
+      "format": "┌──────────────────────────────────────────--------┐"
     },
     {
       "type": "cpu",
@@ -129,7 +129,7 @@ fastfetch --config hyde/*.jsonc
     },
     {
       "type": "custom",
-      "format": "└──────────────────────────────────────────┘"
+      "format": "└──────────────────────────────────────────--------┘"
     },
     {
       "type": "colors",
