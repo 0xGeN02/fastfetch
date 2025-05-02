@@ -3,7 +3,7 @@
 import sys
 
 def main(amdgpu_ids_path: str):
-    with open(amdgpu_ids_path, 'r') as f:
+    with open(amdgpu_ids_path, 'r', encoding="utf-8") as f:
         full_text = f.read()
 
     products = []
@@ -38,6 +38,7 @@ const FFArmGpuProduct ffAmdGpuProducts[] = {
     print(code)
 
 if __name__ == '__main__':
-    len(sys.argv) == 2 or sys.exit('Usage: gen-amdgpuids.py </path/to/amdgpu.ids>')
+    if len(sys.argv) != 2:
+        sys.exit('Usage: gen-amdgpuids.py </path/to/amdgpu.ids>')
 
     main(sys.argv[1])
