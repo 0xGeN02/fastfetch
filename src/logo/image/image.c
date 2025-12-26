@@ -708,8 +708,8 @@ static bool printImageChafa(FFLogoRequestData* requestData, const ImageData* ima
 
 FFLogoImageResult ffLogoPrintImageImpl(FFLogoRequestData* requestData, const FFIMData* imData)
 {
-    FF_LIBRARY_LOAD_SYMBOL(imData->library, MagickCoreGenesis, FF_LOGO_IMAGE_RESULT_INIT_ERROR);
-    FF_LIBRARY_LOAD_SYMBOL(imData->library, MagickCoreTerminus, FF_LOGO_IMAGE_RESULT_INIT_ERROR);
+    FF_LIBRARY_LOAD_SYMBOL(imData->library, MagickCoreGenesis, FF_LOGO_IMAGE_RESULT_INIT_ERROR)
+    FF_LIBRARY_LOAD_SYMBOL(imData->library, MagickCoreTerminus, FF_LOGO_IMAGE_RESULT_INIT_ERROR)
     FF_LIBRARY_LOAD_SYMBOL(imData->library, AcquireExceptionInfo, FF_LOGO_IMAGE_RESULT_INIT_ERROR)
     FF_LIBRARY_LOAD_SYMBOL(imData->library, DestroyExceptionInfo, FF_LOGO_IMAGE_RESULT_INIT_ERROR)
     FF_LIBRARY_LOAD_SYMBOL(imData->library, AcquireImageInfo, FF_LOGO_IMAGE_RESULT_INIT_ERROR)
@@ -891,13 +891,13 @@ static bool printCachedPixel(FFLogoRequestData* requestData)
     if(requestData->type == FF_LOGO_TYPE_IMAGE_KITTY)
     {
         fd = getCacheFD(requestData, FF_CACHE_FILE_KITTY_COMPRESSED);
-        if(fd == FF_INVALID_FD)
+        if(!ffIsValidNativeFD(fd))
             fd = getCacheFD(requestData, FF_CACHE_FILE_KITTY_UNCOMPRESSED);
     }
     else if(requestData->type == FF_LOGO_TYPE_IMAGE_SIXEL)
         fd = getCacheFD(requestData, FF_CACHE_FILE_SIXEL);
 
-    if(fd == FF_INVALID_FD)
+    if(!ffIsValidNativeFD(fd))
         return false;
 
     ffPrintCharTimes('\n', options->paddingTop);

@@ -396,13 +396,10 @@ static const char* drmConnectLibdrm(FFDisplayServerResult* result)
                 }
 
                 FFDisplayResult* item = ffdsAppendDisplay(result,
-                    width,
-                    height,
+                    width, height,
                     refreshRate,
-                    0,
-                    0,
-                    preferredWidth,
-                    preferredHeight,
+                    0, 0,
+                    preferredWidth, preferredHeight,
                     preferredRefreshRate,
                     0,
                     &name,
@@ -440,7 +437,7 @@ static const char* drmConnectLibdrm(FFDisplayServerResult* result)
 
 #endif
 
-const char* ffdsConnectDrm(FFDisplayServerResult* result)
+const char* ffdsConnectDrm(FF_MAYBE_UNUSED FFDisplayServerResult* result)
 {
     #ifdef FF_HAVE_DRM
     if (instance.config.general.dsForceDrm != FF_DS_FORCE_DRM_TYPE_SYSFS_ONLY)

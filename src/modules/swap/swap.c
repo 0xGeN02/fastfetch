@@ -1,39 +1,49 @@
 #include "common/printing.h"
 #include "common/jsonconfig.h"
-#include "common/parsing.h"
 #include "common/percent.h"
+#include "common/size.h"
 #include "detection/swap/swap.h"
 #include "modules/swap/swap.h"
 #include "util/stringUtils.h"
 
-void ffPrintSwap(FFSwapOptions* options)
+void printSwap(FFSwapOptions* options, uint8_t index, FFSwapResult* storage)
 {
-    FFSwapResult storage = {};
-    const char* error = ffDetectSwap(&storage);
+    FF_STRBUF_AUTO_DESTROY key = ffStrbufCreate();
 
-    if(error)
+    if (options->moduleArgs.key.length == 0)
     {
-        ffPrintError(FF_SWAP_MODULE_NAME, 0, &options->moduleArgs, FF_PRINT_TYPE_DEFAULT, "%s", error);
-        return;
+        if (storage->name.length > 0)
+            ffStrbufSetF(&key, "%s (%s)", FF_SWAP_MODULE_NAME, storage->name.chars);
+        else
+            ffStrbufSetS(&key, FF_SWAP_MODULE_NAME);
+    }
+    else
+    {
+        ffStrbufClear(&key);
+        FF_PARSE_FORMAT_STRING_CHECKED(&key, &options->moduleArgs.key, ((FFformatarg[]) {
+            FF_FORMAT_ARG(index, "index"),
+            FF_FORMAT_ARG(storage->name, "name"),
+            FF_FORMAT_ARG(options->moduleArgs.keyIcon, "icon"),
+        }));
     }
 
     FF_STRBUF_AUTO_DESTROY usedPretty = ffStrbufCreate();
-    ffParseSize(storage.bytesUsed, &usedPretty);
+    ffSizeAppendNum(storage->bytesUsed, &usedPretty);
 
     FF_STRBUF_AUTO_DESTROY totalPretty = ffStrbufCreate();
-    ffParseSize(storage.bytesTotal, &totalPretty);
+    ffSizeAppendNum(storage->bytesTotal, &totalPretty);
 
-    double percentage = storage.bytesTotal == 0
+    double percentage = storage->bytesTotal == 0
         ? 0
-        : (double) storage.bytesUsed / (double) storage.bytesTotal * 100.0;
+        : (double) storage->bytesUsed / (double) storage->bytesTotal * 100.0;
 
     FFPercentageTypeFlags percentType = options->percent.type == 0 ? instance.config.display.percentType : options->percent.type;
     if(options->moduleArgs.outputFormat.length == 0)
     {
-        ffPrintLogoAndKey(FF_SWAP_MODULE_NAME, 0, &options->moduleArgs, FF_PRINT_TYPE_DEFAULT);
+        ffPrintLogoAndKey(key.chars, 0, &options->moduleArgs, FF_PRINT_TYPE_NO_CUSTOM_KEY);
         FF_STRBUF_AUTO_DESTROY str = ffStrbufCreate();
 
-        if (storage.bytesTotal == 0)
+        if (storage->bytesTotal == 0)
         {
             if(percentType & FF_PERCENTAGE_TYPE_BAR_BIT)
             {
@@ -71,78 +81,133 @@ void ffPrintSwap(FFSwapOptions* options)
         FF_STRBUF_AUTO_DESTROY percentageBar = ffStrbufCreate();
         if (percentType & FF_PERCENTAGE_TYPE_BAR_BIT)
             ffPercentAppendBar(&percentageBar, percentage, options->percent, &options->moduleArgs);
-        FF_PRINT_FORMAT_CHECKED(FF_SWAP_MODULE_NAME, 0, &options->moduleArgs, FF_PRINT_TYPE_DEFAULT, ((FFformatarg[]){
+        FF_PRINT_FORMAT_CHECKED(key.chars, index, &options->moduleArgs, FF_PRINT_TYPE_NO_CUSTOM_KEY, ((FFformatarg[]){
             FF_FORMAT_ARG(usedPretty, "used"),
             FF_FORMAT_ARG(totalPretty, "total"),
             FF_FORMAT_ARG(percentageNum, "percentage"),
             FF_FORMAT_ARG(percentageBar, "percentage-bar"),
+            FF_FORMAT_ARG(storage->name, "name"),
         }));
     }
 }
 
-bool ffParseSwapCommandOptions(FFSwapOptions* options, const char* key, const char* value)
+bool ffPrintSwap(FFSwapOptions* options)
 {
-    const char* subKey = ffOptionTestPrefix(key, FF_SWAP_MODULE_NAME);
-    if (!subKey) return false;
-    if (ffOptionParseModuleArgs(key, subKey, value, &options->moduleArgs))
-        return true;
+    FF_LIST_AUTO_DESTROY result = ffListCreate(sizeof(FFSwapResult));
+    const char* error = ffDetectSwap(&result);
 
-    if (ffPercentParseCommandOptions(key, subKey, value, &options->percent))
-        return true;
+    if(error)
+    {
+        ffPrintError(FF_SWAP_MODULE_NAME, 0, &options->moduleArgs, FF_PRINT_TYPE_DEFAULT, "%s", error);
+        return false;
+    }
 
-    return false;
+    if (options->separate)
+    {
+        uint8_t index = 0;
+        FF_LIST_FOR_EACH(FFSwapResult, storage, result)
+        {
+            ++index;
+            printSwap(options, index, storage);
+        }
+    }
+    else
+    {
+        FFSwapResult total = {
+            .name = ffStrbufCreate(),
+        };
+        FF_LIST_FOR_EACH(FFSwapResult, storage, result)
+        {
+            total.bytesUsed += storage->bytesUsed;
+            total.bytesTotal += storage->bytesTotal;
+        }
+        printSwap(options, 0, &total);
+        ffStrbufDestroy(&total.name);
+    }
+
+    FF_LIST_FOR_EACH(FFSwapResult, storage, result)
+    {
+        ffStrbufDestroy(&storage->name);
+    }
+
+    return true;
 }
 
 void ffParseSwapJsonObject(FFSwapOptions* options, yyjson_val* module)
 {
-    yyjson_val *key_, *val;
+    yyjson_val *key, *val;
     size_t idx, max;
-    yyjson_obj_foreach(module, idx, max, key_, val)
+    yyjson_obj_foreach(module, idx, max, key, val)
     {
-        const char* key = yyjson_get_str(key_);
-        if(ffStrEqualsIgnCase(key, "type"))
-            continue;
-
         if (ffJsonConfigParseModuleArgs(key, val, &options->moduleArgs))
             continue;
 
         if (ffPercentParseJsonObject(key, val, &options->percent))
             continue;
 
-        ffPrintError(FF_SWAP_MODULE_NAME, 0, &options->moduleArgs, FF_PRINT_TYPE_DEFAULT, "Unknown JSON key %s", key);
+        if (unsafe_yyjson_equals_str(key, "separate"))
+        {
+            options->separate = yyjson_get_bool(val);
+            continue;
+        }
+
+        ffPrintError(FF_SWAP_MODULE_NAME, 0, &options->moduleArgs, FF_PRINT_TYPE_DEFAULT, "Unknown JSON key %s", unsafe_yyjson_get_str(key));
     }
 }
 
 void ffGenerateSwapJsonConfig(FFSwapOptions* options, yyjson_mut_doc* doc, yyjson_mut_val* module)
 {
-    __attribute__((__cleanup__(ffDestroySwapOptions))) FFSwapOptions defaultOptions;
-    ffInitSwapOptions(&defaultOptions);
+    ffPercentGenerateJsonConfig(doc, module, options->percent);
 
-    ffPercentGenerateJsonConfig(doc, module, defaultOptions.percent, options->percent);
-
-    ffJsonConfigGenerateModuleArgsConfig(doc, module, &defaultOptions.moduleArgs, &options->moduleArgs);
+    ffJsonConfigGenerateModuleArgsConfig(doc, module, &options->moduleArgs);
+    yyjson_mut_obj_add_bool(doc, module, "separate", options->separate);
 }
 
-void ffGenerateSwapJsonResult(FF_MAYBE_UNUSED FFSwapOptions* options, yyjson_mut_doc* doc, yyjson_mut_val* module)
+bool ffGenerateSwapJsonResult(FF_MAYBE_UNUSED FFSwapOptions* options, yyjson_mut_doc* doc, yyjson_mut_val* module)
 {
-    FFSwapResult storage;
-    const char* error = ffDetectSwap(&storage);
+    FF_LIST_AUTO_DESTROY result = ffListCreate(sizeof(FFSwapResult));
+    const char* error = ffDetectSwap(&result);
 
     if(error)
     {
         yyjson_mut_obj_add_str(doc, module, "error", error);
-        return;
+        return false;
     }
 
-    yyjson_mut_val* obj = yyjson_mut_obj_add_obj(doc, module, "result");
-    yyjson_mut_obj_add_uint(doc, obj, "total", storage.bytesTotal);
-    yyjson_mut_obj_add_uint(doc, obj, "used", storage.bytesUsed);
+    yyjson_mut_val* arr = yyjson_mut_obj_add_arr(doc, module, "result");
+    FF_LIST_FOR_EACH(FFSwapResult, storage, result)
+    {
+        yyjson_mut_val* obj = yyjson_mut_arr_add_obj(doc, arr);
+        yyjson_mut_obj_add_strbuf(doc, obj, "name", &storage->name);
+        yyjson_mut_obj_add_uint(doc, obj, "used", storage->bytesUsed);
+        yyjson_mut_obj_add_uint(doc, obj, "total", storage->bytesTotal);
+    }
+
+    FF_LIST_FOR_EACH(FFSwapResult, storage, result)
+    {
+        ffStrbufDestroy(&storage->name);
+    }
+
+    return true;
 }
 
-static FFModuleBaseInfo ffModuleInfo = {
+void ffInitSwapOptions(FFSwapOptions* options)
+{
+    ffOptionInitModuleArg(&options->moduleArgs, "󰓡");
+    options->percent = (FFPercentageModuleConfig) { 50, 80, 0 };
+    options->separate = false;
+}
+
+void ffDestroySwapOptions(FFSwapOptions* options)
+{
+    ffOptionDestroyModuleArg(&options->moduleArgs);
+}
+
+FFModuleBaseInfo ffSwapModuleInfo = {
     .name = FF_SWAP_MODULE_NAME,
     .description = "Print swap (paging file) space usage",
-    .parseCommandOptions = (void*) ffParseSwapCommandOptions,
+    .initOptions = (void*) ffInitSwapOptions,
+    .destroyOptions = (void*) ffDestroySwapOptions,
     .parseJsonObject = (void*) ffParseSwapJsonObject,
     .printModule = (void*) ffPrintSwap,
     .generateJsonResult = (void*) ffGenerateSwapJsonResult,
@@ -152,17 +217,6 @@ static FFModuleBaseInfo ffModuleInfo = {
         {"Total size", "total"},
         {"Percentage used (num)", "percentage"},
         {"Percentage used (bar)", "percentage-bar"},
+        {"Name", "name"},
     }))
 };
-
-void ffInitSwapOptions(FFSwapOptions* options)
-{
-    options->moduleInfo = ffModuleInfo;
-    ffOptionInitModuleArg(&options->moduleArgs, "󰓡");
-    options->percent = (FFPercentageModuleConfig) { 50, 80, 0 };
-}
-
-void ffDestroySwapOptions(FFSwapOptions* options)
-{
-    ffOptionDestroyModuleArg(&options->moduleArgs);
-}

@@ -1,7 +1,5 @@
 #pragma once
 
-// This file will be included in "fastfetch.h", do NOT put unnecessary things here
-
 #include "common/option.h"
 #include "common/percent.h"
 
@@ -25,11 +23,14 @@ typedef enum __attribute__((__packed__)) FFDiskCalcType
 
 typedef struct FFDiskOptions
 {
-    FFModuleBaseInfo moduleInfo;
     FFModuleArgs moduleArgs;
 
     FFstrbuf folders;
+    FFstrbuf hideFolders;
+    FFstrbuf hideFS;
     FFDiskVolumeType showTypes;
     FFDiskCalcType calcType;
     FFPercentageModuleConfig percent;
 } FFDiskOptions;
+
+static_assert(sizeof(FFDiskOptions) <= FF_OPTION_MAX_SIZE, "FFDiskOptions size exceeds maximum allowed size");

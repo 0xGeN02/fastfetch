@@ -2,6 +2,7 @@
 #include "util/apple/cf_helpers.h"
 #include "util/stringUtils.h"
 #include "util/edidHelper.h"
+#include "detection/os/os.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -194,7 +195,6 @@ void ffConnectDisplayServerImpl(FFDisplayServerResult* ds)
             ffStrbufSetStatic(&ds->wmPrettyName, "Quartz Compositor");
         }
     }
-    ffStrbufSetStatic(&ds->dePrettyName, "Aqua");
 
     detectDisplays(ds);
 }

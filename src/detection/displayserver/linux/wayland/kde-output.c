@@ -137,6 +137,12 @@ static void waylandKdeHdrListener(void *data, FF_MAYBE_UNUSED struct kde_output_
     display->hdrEnabled = !!hdr_enabled;
 }
 
+static void waylandKdeMaxBitsPerColorListener(void *data, FF_MAYBE_UNUSED struct kde_output_device_v2 *kde_output_device_v2, uint32_t max_bpc)
+{
+    WaylandDisplay* display = data;
+    display->bitDepth = (uint8_t) max_bpc;
+}
+
 static struct kde_output_device_v2_listener outputListener = {
     .geometry = waylandKdeGeometryListener,
     .current_mode = waylandKdeCurrentModeListener,
@@ -165,6 +171,15 @@ static struct kde_output_device_v2_listener outputListener = {
     .brightness = (void*) stubListener,
     .color_power_tradeoff = (void*) stubListener,
     .dimming = (void*) stubListener,
+    .replication_source = (void*) stubListener,
+    .ddc_ci_allowed = (void*) stubListener,
+    .max_bits_per_color = (void*) waylandKdeMaxBitsPerColorListener,
+    .max_bits_per_color_range = (void*) stubListener,
+    .automatic_max_bits_per_color_limit = (void*) stubListener,
+    .edr_policy = (void*) stubListener,
+    .sharpness = (void*) stubListener,
+    .priority = (void*) stubListener,
+    .auto_brightness = (void*) stubListener,
 };
 
 const char* ffWaylandHandleKdeOutput(WaylandData* wldata, struct wl_registry* registry, uint32_t name, uint32_t version)
@@ -207,8 +222,8 @@ const char* ffWaylandHandleKdeOutput(WaylandData* wldata, struct wl_registry* re
         (uint32_t) display.width,
         (uint32_t) display.height,
         display.refreshRate / 1000.0,
-        (uint32_t) (display.width / display.scale),
-        (uint32_t) (display.height / display.scale),
+        (uint32_t) (display.width / display.scale + .5),
+        (uint32_t) (display.height / display.scale + .5),
         (uint32_t) display.preferredWidth,
         (uint32_t) display.preferredHeight,
         display.preferredRefreshRate / 1000.0,
@@ -237,6 +252,7 @@ const char* ffWaylandHandleKdeOutput(WaylandData* wldata, struct wl_registry* re
         item->manufactureYear = display.myear;
         item->manufactureWeek = display.mweek;
         item->serial = display.serial;
+        item->bitDepth = display.bitDepth;
     }
 
     ffStrbufDestroy(&display.description);

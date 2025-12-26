@@ -8,14 +8,14 @@
 #include <string.h>
 #import <Foundation/Foundation.h>
 
-static void parseSystemVersion(FFOSResult* os)
+static bool parseSystemVersion(FFOSResult* os)
 {
     NSError* error;
     NSString* fileName = @"file:///System/Library/CoreServices/SystemVersion.plist";
     NSDictionary* dict = [NSDictionary dictionaryWithContentsOfURL:[NSURL URLWithString:fileName]
                                        error:&error];
     if(error)
-        return;
+        return false;
 
     NSString* value;
 
@@ -25,6 +25,13 @@ static void parseSystemVersion(FFOSResult* os)
         ffStrbufInitS(&os->version, value.UTF8String);
     if((value = dict[@"ProductBuildVersion"]))
         ffStrbufInitS(&os->buildID, value.UTF8String);
+    if (ffStrbufStartsWithS(&os->version, "16."))
+    {
+        // macOS 26 Tahoe. #1809
+        os->version.chars[0] = '2';
+    }
+
+    return true;
 }
 
 static bool detectOSCodeName(FFOSResult* os)
@@ -37,6 +44,8 @@ static bool detectOSCodeName(FFOSResult* os)
 
     switch (num)
     {
+        case 26:
+        case 16: ffStrbufSetStatic(&os->codename, "Tahoe"); return true;
         case 15: ffStrbufSetStatic(&os->codename, "Sequoia"); return true;
         case 14: ffStrbufSetStatic(&os->codename, "Sonoma"); return true;
         case 13: ffStrbufSetStatic(&os->codename, "Ventura"); return true;
@@ -62,7 +71,7 @@ static bool detectOSCodeName(FFOSResult* os)
                 case 6: ffStrbufSetStatic(&os->codename, "Snow Leopard"); return true;
                 case 5: ffStrbufSetStatic(&os->codename, "Leopard"); return true;
                 case 4: ffStrbufSetStatic(&os->codename, "Tiger"); return true;
-                case 3: ffStrbufSetStatic(&os->codename, "Panther"); ffStrbufSetStatic(&os->prettyName, "Mac OS X"); return true;
+                case 3: ffStrbufSetStatic(&os->codename, "Panther"); return true;
                 case 2: ffStrbufSetStatic(&os->codename, "Jaguar"); return true;
                 case 1: ffStrbufSetStatic(&os->codename, "Puma"); return true;
                 case 0: ffStrbufSetStatic(&os->codename, "Cheetah"); return true;
@@ -73,41 +82,24 @@ static bool detectOSCodeName(FFOSResult* os)
     return false;
 }
 
-static void parseOSXSoftwareLicense(FFOSResult* os)
-{
-    FF_AUTO_CLOSE_FILE FILE* rtf = fopen("/System/Library/CoreServices/Setup Assistant.app/Contents/Resources/en.lproj/OSXSoftwareLicense.rtf", "r");
-    if(rtf == NULL)
-        return;
-
-    FF_AUTO_FREE char* line = NULL;
-    size_t len = 0;
-    const char* searchStr = "\\f0\\b SOFTWARE LICENSE AGREEMENT FOR macOS ";
-    while(getline(&line, &len, rtf) != EOF)
-    {
-        if (ffStrStartsWith(line, searchStr))
-        {
-            ffStrbufAppendS(&os->codename, line + strlen(searchStr));
-            ffStrbufTrimRight(&os->codename, '\n');
-            ffStrbufTrimRight(&os->codename, '\\');
-            break;
-        }
-    }
-}
-
 void ffDetectOSImpl(FFOSResult* os)
 {
     parseSystemVersion(os);
 
     ffStrbufSetStatic(&os->id, "macos");
 
-    if(os->version.length == 0)
+    if(__builtin_expect(os->name.length == 0, 0))
+        ffStrbufSetStatic(&os->name, "macOS");
+
+    if(__builtin_expect(os->version.length == 0, 0))
         ffSysctlGetString("kern.osproductversion", &os->version);
 
-    if(os->buildID.length == 0)
+    if(__builtin_expect(os->buildID.length == 0, 0))
         ffSysctlGetString("kern.osversion", &os->buildID);
 
     ffStrbufAppend(&os->versionID, &os->version);
 
-    if(!detectOSCodeName(os))
-        parseOSXSoftwareLicense(os);
+    detectOSCodeName(os);
+
+    ffStrbufSetF(&os->prettyName, "%s %s %s (%s)", os->name.chars, os->codename.chars, os->version.chars, os->buildID.chars);
 }

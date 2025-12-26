@@ -9,7 +9,10 @@
 #include <mntent.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
-#include <sys/mount.h>
+
+#if defined(STATX_BTIME) && !defined(__ANDROID__)
+    #include <sys/syscall.h>
+#endif
 
 #ifdef __USE_LARGEFILE64
     #define stat stat64
@@ -37,6 +40,10 @@ static bool isPhysicalDevice(const struct mntent* device)
     if(ffStrEquals(device->mnt_type, "zfs"))
         return true;
 
+    //sshfs
+    if(ffStrEquals(device->mnt_type, "fuse.sshfs"))
+        return true;
+
     //Pseudo filesystems don't have a device in /dev
     if(!ffStrStartsWith(device->mnt_fsname, "/dev/"))
         return false;
@@ -50,6 +57,9 @@ static bool isPhysicalDevice(const struct mntent* device)
         ffStrStartsWith(device->mnt_fsname + 5, "ram")  || //Ignore ram devices
         ffStrStartsWith(device->mnt_fsname + 5, "fd")      //Ignore fd devices
     ) return false;
+
+    if (ffStrStartsWith(device->mnt_dir, "/bedrock/")) // Ignore Bedrock Linux subvolumes
+        return false;
 
     struct stat deviceStat;
     if(stat(device->mnt_fsname, &deviceStat) != 0)
@@ -220,7 +230,7 @@ static bool isRemovable(FFDisk* currentDisk)
 
 static void detectType(const FFlist* disks, FFDisk* currentDisk, struct mntent* device)
 {
-    if(ffStrbufStartsWithS(&currentDisk->mountpoint, "/boot") || ffStrbufStartsWithS(&currentDisk->mountpoint, "/efi"))
+    if(hasmntopt(device, "x-gvfs-hide") || hasmntopt(device, "hidden"))
         currentDisk->type = FF_DISK_VOLUME_TYPE_HIDDEN_BIT;
     else if(isSubvolume(disks, currentDisk))
         currentDisk->type = FF_DISK_VOLUME_TYPE_SUBVOLUME_BIT;
@@ -240,9 +250,9 @@ static void detectStats(FFDisk* disk)
     if(statvfs(disk->mountpoint.chars, &fs) != 0)
         memset(&fs, 0, sizeof(fs)); //Set all values to 0, so our values get initialized to 0 too
 
-    disk->bytesTotal = fs.f_blocks * fs.f_frsize;
-    disk->bytesFree = fs.f_bfree * fs.f_frsize;
-    disk->bytesAvailable = fs.f_bavail * fs.f_frsize;
+    disk->bytesTotal = fs.f_blocks * (uint64_t) fs.f_frsize;
+    disk->bytesFree = fs.f_bfree * (uint64_t) fs.f_frsize;
+    disk->bytesAvailable = fs.f_bavail * (uint64_t) fs.f_frsize;
     disk->bytesUsed = 0; // To be filled in ./disk.c
 
     if (fs.f_files >= fs.f_ffree)
@@ -257,9 +267,9 @@ static void detectStats(FFDisk* disk)
     }
 
     disk->createTime = 0;
-    #ifdef FF_HAVE_STATX
+    #ifdef SYS_statx
     struct statx stx;
-    if (statx(0, disk->mountpoint.chars, 0, STATX_BTIME, &stx) == 0 && (stx.stx_mask & STATX_BTIME))
+    if (syscall(SYS_statx, 0, disk->mountpoint.chars, 0, STATX_BTIME, &stx) == 0 && (stx.stx_mask & STATX_BTIME) && stx.stx_btime.tv_sec > 685065600 /*birth of Linux*/)
         disk->createTime = (uint64_t)((stx.stx_btime.tv_sec * 1000) + (stx.stx_btime.tv_nsec / 1000000));
     #endif
 
@@ -279,12 +289,18 @@ const char* ffDetectDisksImpl(FFDiskOptions* options, FFlist* disks)
 
     while((device = getmntent(mountsFile)))
     {
-        if (__builtin_expect(options->folders.length, 0))
+        if (__builtin_expect(options->folders.length > 0, false))
         {
-            if (!ffDiskMatchMountpoint(options, device->mnt_dir))
+            if (!ffStrbufSeparatedContainS(&options->folders, device->mnt_dir, FF_DISK_FOLDER_SEPARATOR))
                 continue;
         }
         else if(!isPhysicalDevice(device))
+            continue;
+
+        if (options->hideFolders.length && ffDiskMatchesFolderPatterns(&options->hideFolders, device->mnt_dir, FF_DISK_FOLDER_SEPARATOR))
+            continue;
+
+        if (options->hideFS.length && ffStrbufSeparatedContainS(&options->hideFS, device->mnt_type, ':'))
             continue;
 
         //We have a valid device, add it to the list

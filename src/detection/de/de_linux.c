@@ -6,22 +6,34 @@
 #include "common/parsing.h"
 #include "common/properties.h"
 #include "common/processing.h"
+#include "util/binary.h"
+#include "util/path.h"
 #include "detection/displayserver/displayserver.h"
-#include "util/stringUtils.h"
 
 #include <ctype.h>
+#ifdef __FreeBSD__
+    #include <paths.h>
+    #ifndef _PATH_LOCALBASE
+        #define _PATH_LOCALBASE "/usr/local"
+    #endif
+#elif __OpenBSD__
+    #define _PATH_LOCALBASE "/usr/local"
+#elif __NetBSD__
+    #define _PATH_LOCALBASE "/usr/pkg"
+#endif
 
 static void getKDE(FFstrbuf* result, FFDEOptions* options)
 {
-    ffParsePropFileValues(FASTFETCH_TARGET_DIR_USR "/share/wayland-sessions/plasma.desktop", 1, (FFpropquery[]) {
-        {"X-KDE-PluginInfo-Version =", result}
-    });
+#ifdef _PATH_LOCALBASE
+    ffParsePropFile(_PATH_LOCALBASE "/share/wayland-sessions/plasma.desktop", "X-KDE-PluginInfo-Version =", result);
     if(result->length == 0)
-    {
-        ffParsePropFileValues(FASTFETCH_TARGET_DIR_USR "/share/xsessions/plasmax11.desktop", 1, (FFpropquery[]) {
-            {"X-KDE-PluginInfo-Version =", result}
-        });
-    }
+        ffParsePropFile(_PATH_LOCALBASE "/share/xsessions/plasmax11.desktop", "X-KDE-PluginInfo-Version =", result);
+#else
+    ffParsePropFile(FASTFETCH_TARGET_DIR_USR "/share/wayland-sessions/plasma.desktop", "X-KDE-PluginInfo-Version =", result);
+    if(result->length == 0)
+        ffParsePropFile(FASTFETCH_TARGET_DIR_USR "/share/xsessions/plasmax11.desktop", "X-KDE-PluginInfo-Version =", result);
+#endif
+
     if(result->length == 0)
         ffParsePropFileData("xsessions/plasma.desktop", "X-KDE-PluginInfo-Version =", result);
     if(result->length == 0)
@@ -184,6 +196,45 @@ static void getUnity(FFstrbuf* result, FF_MAYBE_UNUSED FFDEOptions* options)
         ffStrbufSubstrBeforeFirstC(result, '"');
 }
 
+static bool extractTdeVersion(const char* line, uint32_t len, void *userdata)
+{
+    int count = 0;
+    sscanf(line, "R%*d.%*d.%*d%n", &count);
+    if (count == 0) return true;
+
+    ffStrbufSetNS((FFstrbuf*) userdata, len, line);
+    return false;
+}
+
+static const char* getTrinity(FFstrbuf* result, FFDEOptions* options)
+{
+    FF_STRBUF_AUTO_DESTROY path = ffStrbufCreate();
+    const char* error = ffFindExecutableInPath("tde-config", &path);
+    if (error) return "Failed to find tde-config path";
+
+    ffStrbufSubstrBeforeLastC(&path, '/');
+    ffStrbufAppendS(&path, "/../lib/libtdecore.so");
+
+    if (ffBinaryExtractStrings(path.chars, extractTdeVersion, result, strlen("R0.0.0")) == NULL)
+        return NULL;
+
+    if (options->slowVersionDetection)
+    {
+        ffStrbufClear(&path);
+        ffProcessAppendStdOut(&path, (char* const[]){
+            "tde-config",
+            "--version",
+            NULL
+        });
+
+        ffParsePropLines(path.chars , "TDE: ", result);
+        return NULL;
+    }
+
+    return "All methods failed";
+}
+
+
 const char* ffDetectDEVersion(const FFstrbuf* deName, FFstrbuf* result, FFDEOptions* options)
 {
     if (!instance.config.general.detectVersion) return "Disabled by config";
@@ -204,6 +255,8 @@ const char* ffDetectDEVersion(const FFstrbuf* deName, FFstrbuf* result, FFDEOpti
         getBudgie(result, options);
     else if (ffStrbufEqualS(deName, FF_DE_PRETTY_UNITY))
         getUnity(result, options);
+    else if (ffStrbufEqualS(deName, "trinity"))
+        getTrinity(result, options);
     else
         return "Unsupported DE";
     return NULL;

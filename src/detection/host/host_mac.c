@@ -121,7 +121,7 @@ const char* ffHostGetMacProductNameWithHwModel(const FFstrbuf* hwModel)
            ffStrEquals(version, "16,5"))        return "MacBook Pro (16-inch, 2024, Three Thunderbolt 5 ports)";
         if(ffStrEquals(version, "15,14"))       return "Mac Studio (M3 Ultra, 2025)";
         if(ffStrEquals(version, "15,13"))       return "MacBook Air (15-inch, M3, 2024)";
-        if(ffStrEquals(version, "15,2"))        return "MacBook Air (13-inch, M3, 2024)";
+        if(ffStrEquals(version, "15,12"))       return "MacBook Air (13-inch, M3, 2024)";
         if(ffStrEquals(version, "15,3"))        return "MacBook Pro (14-inch, Nov 2023, Two Thunderbolt / USB 4 ports)";
         if(ffStrEquals(version, "15,4"))        return "iMac (24-inch, 2023, Two Thunderbolt / USB 4 ports)";
         if(ffStrEquals(version, "15,5"))        return "iMac (24-inch, 2023, Two Thunderbolt / USB 4 ports, Two USB 3 ports)";
@@ -140,7 +140,7 @@ const char* ffHostGetMacProductNameWithHwModel(const FFstrbuf* hwModel)
         if(ffStrEquals(version, "14,5") ||
            ffStrEquals(version, "14,9"))        return "MacBook Pro (14-inch, 2023)";
         if(ffStrEquals(version, "14,3"))        return "Mac mini (M2, 2023, Two Thunderbolt 4 ports)";
-        if(ffStrEquals(version, "14,12"))       return "Mac mini (M2, 2023, Four Thunderbolt 4 ports)";
+        if(ffStrEquals(version, "14,12"))       return "Mac mini (M2 Pro, 2023, Four Thunderbolt 4 ports)";
         if(ffStrEquals(version, "14,7"))        return "MacBook Pro (13-inch, M2, 2022)";
         if(ffStrEquals(version, "14,2"))        return "MacBook Air (M2, 2022)";
         if(ffStrEquals(version, "13,1"))        return "Mac Studio (M1 Max, 2022, Two USB-C front ports)";
@@ -181,7 +181,7 @@ const char* ffHostGetMacProductNameWithHwModel(const FFstrbuf* hwModel)
 #ifdef __x86_64__
 bool ffHostDetectMac(FFHostResult* host)
 {
-    if (ffStrbufEqualS(&host->family, "Mac") && ffStrbufEqualS(&host->vendor, "Apple Inc."))
+    if (ffStrbufStartsWithS(&host->family, "Mac") && ffStrbufEqualS(&host->vendor, "Apple Inc."))
     {
         const char* productName = ffHostGetMacProductNameWithHwModel(&host->name);
         if (productName)

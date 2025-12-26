@@ -4,42 +4,131 @@
 #include "util/mallocHelper.h"
 #include "util/smbiosHelper.h"
 
-#include <pdh.h>
+#include <windows.h>
+#include "util/windows/perflib_.h"
+#include <wchar.h>
 
-static void ffPdhOpenCloseQuery(HQUERY* query)
+static inline void ffPerfCloseQueryHandle(HANDLE* phQuery)
 {
-    assert(query);
-    if (*query)
+    if (*phQuery != NULL)
     {
-        PdhCloseQuery(*query);
-        *query = NULL;
+        PerfCloseQueryHandle(*phQuery);
+        *phQuery = NULL;
     }
 }
 
-static const char* detectThermalTemp(double* result)
+const char* detectThermalTemp(const FFCPUOptions* options, double* result)
 {
-    // typeperf.exe -sc 1 "\Thermal Zone Information(*)\Temperature"
+    struct FFPerfQuerySpec
+    {
+        PERF_COUNTER_IDENTIFIER Identifier;
+        WCHAR Name[16];
+    } querySpec = {
+        .Identifier = {
+            // Thermal Zone Information
+            // HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib\_V2Providers\{383487a6-3676-4870-a4e7-d45b30c35629}\{52bc5412-dac2-449c-8bc2-96443888fe6b}
+            .CounterSetGuid = { 0x52bc5412, 0xdac2, 0x449c, {0x8b, 0xc2, 0x96, 0x44, 0x38, 0x88, 0xfe, 0x6b} },
+            .Size = sizeof(querySpec),
+            .CounterId = PERF_WILDCARD_COUNTER,
+            .InstanceId = PERF_WILDCARD_COUNTER,
+        },
+        .Name = L"\\_TZ.CPUZ", // The standard(?) instance name for CPU temperature in the thermal provider
+    };
 
-    __attribute__((__cleanup__(ffPdhOpenCloseQuery))) HQUERY query = NULL;
+    if (options->tempSensor.length > 0)
+    {
+        int written = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, options->tempSensor.chars, (int) options->tempSensor.length, querySpec.Name, (int)(ARRAY_SIZE(querySpec.Name) - 1));
+        if (written == 0)
+            return "Invalid temp sensor string";
+        querySpec.Name[written] = L'\0';
+    }
 
-    if (PdhOpenQueryW(NULL, 0, &query) != ERROR_SUCCESS)
-        return "Failed to open PDH query";
+    DWORD dataSize = 0;
+    if (PerfEnumerateCounterSetInstances(NULL, &querySpec.Identifier.CounterSetGuid, NULL, 0, &dataSize) != ERROR_NOT_ENOUGH_MEMORY)
+        return "PerfEnumerateCounterSetInstances() failed";
 
-    HCOUNTER counter = NULL;
-    if (PdhAddEnglishCounterW(query,
-        L"\\Thermal Zone Information(*)\\Temperature",
-        0,
-        &counter) != ERROR_SUCCESS)
-        return "Failed to add TZI temperature counter";
+    if (dataSize <= sizeof(PERF_INSTANCE_HEADER))
+        return "No `Thermal Zone Information` instances found";
 
-    if (PdhCollectQueryData(query) != ERROR_SUCCESS)
-        return "Failed to collect query data";
+    {
+        FF_AUTO_FREE PERF_INSTANCE_HEADER* const pHead = malloc(dataSize);
+        if (PerfEnumerateCounterSetInstances(NULL, &querySpec.Identifier.CounterSetGuid, pHead, dataSize, &dataSize) != ERROR_SUCCESS)
+            return "PerfEnumerateCounterSetInstances() failed to get instance headers";
 
-    PDH_FMT_COUNTERVALUE value;
-    if (PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, NULL, &value) != ERROR_SUCCESS)
-        return "Failed to format counter value";
+        PERF_INSTANCE_HEADER* pInstanceHeader = pHead;
+        while (1)
+        {
+            const wchar_t* instanceName = (const wchar_t*)((BYTE*)pInstanceHeader + sizeof(*pInstanceHeader));
+            if (wcscmp(instanceName, querySpec.Name) == 0)
+                break;
 
-    *result = value.doubleValue - 273;
+            dataSize -= pInstanceHeader->Size;
+            if (dataSize == 0)
+                break;
+            pInstanceHeader = (PERF_INSTANCE_HEADER*)((BYTE*)pInstanceHeader + pInstanceHeader->Size);
+        }
+
+        if (dataSize == 0)
+        {
+            if (options->tempSensor.length > 0)
+                return "Unable to find CPU sensor";
+
+            const wchar_t* instanceName = (const wchar_t*)((BYTE*)pHead + sizeof(*pHead));
+            wcscpy(querySpec.Name, instanceName); // Use the first instance name if the specific one is not found
+        }
+    }
+
+    __attribute__((__cleanup__(ffPerfCloseQueryHandle)))
+    HANDLE hQuery = NULL;
+
+    if (PerfOpenQueryHandle(NULL, &hQuery) != ERROR_SUCCESS)
+        return "PerfOpenQueryHandle() failed";
+
+    if (PerfAddCounters(hQuery, &querySpec.Identifier, sizeof(querySpec)) != ERROR_SUCCESS)
+        return "PerfAddCounters() failed";
+
+    if (querySpec.Identifier.Status != ERROR_SUCCESS)
+        return "PerfAddCounters() reports invalid identifier";
+
+    if (PerfQueryCounterData(hQuery, NULL, 0, &dataSize) != ERROR_NOT_ENOUGH_MEMORY)
+        return "PerfQueryCounterData(NULL) failed";
+
+    if (dataSize <= sizeof(PERF_DATA_HEADER) + sizeof(PERF_COUNTER_HEADER)) // PERF_ERROR_RETURN, should not happen
+        return "instance doesn't exist";
+
+    FF_AUTO_FREE PERF_DATA_HEADER* const pDataHeader = malloc(dataSize);
+
+    if (PerfQueryCounterData(hQuery, pDataHeader, dataSize, &dataSize) != ERROR_SUCCESS)
+        return "PerfQueryCounterData(pDataHeader) failed";
+
+    PERF_COUNTER_HEADER* pCounterHeader = (PERF_COUNTER_HEADER*)(pDataHeader + 1);
+    if (pCounterHeader->dwType != PERF_MULTIPLE_COUNTERS)
+        return "Invalid counter type";
+
+    PERF_MULTI_COUNTERS* pMultiCounters = (PERF_MULTI_COUNTERS*)(pCounterHeader + 1);
+    PERF_COUNTER_DATA* pCounterData = (PERF_COUNTER_DATA*)((BYTE*)pMultiCounters + pMultiCounters->dwSize);
+
+    for (ULONG iCounter = 0; iCounter != pMultiCounters->dwCounters; iCounter++)
+    {
+        if (pCounterData->dwDataSize == sizeof(int32_t))
+        {
+            DWORD* pCounterIds = (DWORD*)(pMultiCounters + 1);
+            int32_t value = *(int32_t*)(pCounterData + 1);
+            if (value == 0)
+                return "Temperature data is zero";
+
+            switch (pCounterIds[iCounter]) {
+            case 0: // Temperature
+                *result = value - 273;
+                break;
+            case 3: // High Precision Temperature
+                *result = value / 10.0 - 273;
+                break;
+            }
+        }
+
+        pCounterData = (PERF_COUNTER_DATA*)((BYTE*)pCounterData + pCounterData->dwSize);
+    }
 
     return NULL;
 }
@@ -151,7 +240,9 @@ static const char* detectNCores(FFCPUResult* cpu)
         else if (ptr->Relationship == RelationProcessorCore)
             ++cpu->coresPhysical;
         else if (ptr->Relationship == RelationProcessorPackage)
-            cpu->packages++;
+            ++cpu->packages;
+        else if (ptr->Relationship == RelationNumaNode)
+            ++cpu->numaNodes;
     }
 
     return NULL;
@@ -164,7 +255,8 @@ static const char* detectByRegistry(FFCPUResult* cpu)
         return "ffRegOpenKeyForRead(HKEY_LOCAL_MACHINE, L\"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0\", &hKey, NULL) failed";
 
     ffRegReadStrbuf(hKey, L"ProcessorNameString", &cpu->name, NULL);
-    ffRegReadStrbuf(hKey, L"VendorIdentifier", &cpu->vendor, NULL);
+    if (ffRegReadStrbuf(hKey, L"VendorIdentifier", &cpu->vendor, NULL))
+        ffStrbufTrimRightSpace(&cpu->vendor);
 
     if (cpu->coresLogical == 0)
     {
@@ -213,14 +305,14 @@ const char* ffDetectCPUImpl(const FFCPUOptions* options, FFCPUResult* cpu)
     if (error)
         return error;
 
-    ffCPUDetectSpeedByCpuid(cpu);
+    ffCPUDetectByCpuid(cpu);
     if (options->showPeCoreCount) detectCoreTypes(cpu);
 
     if (cpu->frequencyMax == 0)
         detectMaxSpeedBySmbios(cpu);
 
     if(options->temp)
-        detectThermalTemp(&cpu->temperature);
+        detectThermalTemp(options, &cpu->temperature);
 
     return NULL;
 }

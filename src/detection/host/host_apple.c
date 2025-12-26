@@ -36,12 +36,17 @@ const char* getOthersByIokit(FFHostResult* host)
     if (manufacturer)
         ffCfStrGetString(manufacturer, &host->vendor);
 
+    FF_CFTYPE_AUTO_RELEASE CFStringRef version = IORegistryEntryCreateCFProperty(registryEntry, CFSTR("version"), kCFAllocatorDefault, kNilOptions);
+    if (version)
+        ffCfStrGetString(version, &host->version);
+
     return NULL;
 }
 
 const char* ffDetectHost(FFHostResult* host)
 {
-    const char* error = ffSysctlGetString("hw.model", &host->family);
+    const char* error = ffSysctlGetString("hw.product", &host->family);
+    if (error) error = ffSysctlGetString("hw.model", &host->family);
     if (error) return error;
 
     ffStrbufSetStatic(&host->name, ffHostGetMacProductNameWithHwModel(&host->family));
